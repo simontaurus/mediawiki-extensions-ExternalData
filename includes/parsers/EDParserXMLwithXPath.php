@@ -35,6 +35,7 @@ class EDParserXMLwithXPath extends EDParserBase {
 	 */
 	public function __invoke( $text, $defaults = [] ) {
 		try {
+			$text = str_replace('xmlns=', 'ns=', $text); //see comments : https://www.php.net/manual/de/simplexmlelement.xpath.php
 			$xml = new SimpleXMLElement( $text );
 		} catch ( Exception $e ) {
 			throw new EDParserException( 'externaldata-invalid-xml', $e->getMessage() );
