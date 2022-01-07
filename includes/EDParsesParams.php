@@ -7,52 +7,54 @@
  * @author Alexander Mashin
  *
  */
+
+use Wikimedia\AtEase\AtEase;
+use function MediaWiki\restoreWarnings;
+use function MediaWiki\suppressWarnings;
+
 trait EDParsesParams {
-	/** @var bool $preserve_external_variables_case Whether external variables' names are case-sensitive for this format. */
-	protected static $preserve_external_variables_case = false;
+	/** @var string PREFIX Prefix for the new configuration. */
+	public static $prefix = 'wgExternalData';
+	/** @var string OLD_PREFIX Prefix for old style configuration. */
+	public static $oldPrefix = 'edg';
+
+	/** @var bool $keepExternalVarsCase Whether external variables' names are case-sensitive for this format. */
+	public $keepExternalVarsCase = false;
 
 	/**
-	 * This method adds secret parameters to user-supplied ones, extracting them from
-	 * global configuration variables.
+	 * Get a configuration setting.
 	 *
-	 * @param array $params User-supplied parameters.
+	 * @param string $setting Setting's name.
 	 *
-	 * @return array Supplemented parameters.
+	 * @return mixed Setting's value.
 	 */
-	protected static function supplementParams( array $params ) {
-		global $edgSecrets;
-		$prefix = 'edg';
-		$supplemented = $params;
-		foreach ( $edgSecrets as $key => $globals ) {
-			if ( isset( $params[$key] ) ) {
-				foreach ( $globals as $global ) {
-					$prefixed_global = $prefix . $global;
-					global $$prefixed_global;
-					if ( isset( $$prefixed_global[$params[$key]] ) ) {
-						$supplemented[$global] = $$prefixed_global[$params[$key]];
-					}
-				}
-			}
+	protected static function setting( $setting ) {
+		if ( isset( $GLOBALS[self::$prefix . $setting ] ) ) {
+			return $GLOBALS[self::$prefix . $setting ];
 		}
-		return $supplemented;
+		if ( isset( $GLOBALS[self::$oldPrefix . $setting ] ) ) {
+			return $GLOBALS[self::$oldPrefix . $setting ];
+		}
+		// Special case.
+		if ( $setting === 'Verbose' ) {
+			global $wgExternalValueVerbose;
+			return $wgExternalValueVerbose;
+		}
 	}
 
 	/**
 	 * Make choice of needed data based on an array of parameters and array of patterns to match.
 	 *
-	 * @param array $args A named array of parameters passed from parser or Lua function.
+	 * @param array $params A named array of parameters passed from parser or Lua function.
 	 * @param array $patterns An array of patterns that $params has to match.
 	 *
 	 * @return string|null ID of matched pattern.
-	 *
-	 * @throws EDParserException
 	 */
-	protected static function getMatch( array $args, array $patterns ) {
-		// Bring keys to lowercase:
-		$args = self::paramToArray( $args, true, false );
-		$supplemented_params = self::supplementParams( $args );
-		foreach ( $patterns as list( $pattern, $match ) ) {
-			if ( self::paramsFit( $supplemented_params, $pattern ) ) {
+	protected static function getMatch( array $params, array $patterns ) {
+		// Bring keys to lowercase, turn comma-separated string to arrays.
+		$parsed = self::paramToArray( $params, true, false );
+		foreach ( $patterns as [ $pattern, $match ] ) {
+			if ( self::paramsFit( $parsed, $pattern ) ) {
 				return $match;
 			}
 		}
@@ -64,19 +66,49 @@ trait EDParsesParams {
 	 * Check, if the passed parameters fit a 'pattern':
 	 *
 	 * @param array $params Parameters to be checked.
-	 * @param array $pattern Parametes 'pattern'.
+	 * @param array $pattern Parameters 'pattern'.
 	 *
 	 * @return bool
 	 */
 	private static function paramsFit( array $params, array $pattern ) {
 		foreach ( $pattern as $key => $value ) {
+			if ( $key === '__exists' ) {
+				if ( class_exists( $value ) ) {
+					// A necessary class is provided by a library.
+					continue;
+				} else {
+					return false;
+				}
+			}
 			if ( !array_key_exists( $key, $params ) // | use xpath, etc.
-			  || $value !== true && strtolower( $params[$key] ) !== strtolower( $value ) // format = (format), etc.
+			  || !(
+					$value === true // argument should be present.
+				 || strtolower( $params[$key] ) === strtolower( $value ) // argument should have a certain value.
+				 || self::isRegex( $value ) && preg_match( $value, $params[$key] ) // argument should match a regex.
+				) // format = (format), etc.
 			) {
 				return false;
 			}
 		}
 		return true;
+	}
+
+	/**
+	 * Returns true, if the passed string is a regular expression.
+	 *
+	 * @param string $str
+	 *
+	 * @return bool
+	 */
+	private static function isRegex( $str ) {
+		self::suppressWarnings(); // for preg_match() on regular strings.
+		try {
+			$is_regex = preg_match( $str, '' ) !== false;
+		} catch ( Exception $e ) {
+			return false;
+		}
+		self::restoreWarnings();
+		return $is_regex;
 	}
 
 	/**
@@ -87,10 +119,11 @@ trait EDParsesParams {
 	 * @param string|array $arg Values to parse.
 	 * @param bool $lowercaseKeys bring keys to lower case.
 	 * @param bool $lowercaseValues bring values to lower case.
+	 * @param bool $numeric Set anonymous parameter's name to a number rather than to itself.
 	 *
 	 * @return array Parsed parameter.
 	 */
-	protected static function paramToArray( $arg, $lowercaseKeys = false, $lowercaseValues = false ) {
+	protected static function paramToArray( $arg, $lowercaseKeys = false, $lowercaseValues = false, $numeric = false ) {
 		if ( !is_array( $arg ) ) {
 			// Not an array. Splitting needed.
 			$arg = preg_replace( "/\s\s+/", ' ', $arg ); // whitespace
@@ -110,12 +143,17 @@ END;
 			// " - fix for color highlighting in vi :)
 			$keyValuePairs = preg_split( $pattern, $arg );
 			$splitArray = [];
+			$counter = 0;
 			foreach ( $keyValuePairs as $keyValuePair ) {
-				if ( strpos( $keyValuePair, '=' ) !== false ) {
-					list( $key, $value ) = explode( '=', $keyValuePair, 2 );
+				if ( $keyValuePair === '' ) {
+					// Ignore.
+				} elseif ( strpos( $keyValuePair, '=' ) !== false ) {
+					[ $key, $value ] = explode( '=', $keyValuePair, 2 );
 					$splitArray[trim( $key )] = trim( $value );
+				} elseif ( $numeric ) {
+					$splitArray[$counter++] = trim( $keyValuePair );
 				} else {
-					$splitArray[trim( $keyValuePair )] = null;
+					$splitArray[trim( $keyValuePair )] = trim( $keyValuePair );
 				}
 			}
 		} else {
@@ -146,12 +184,11 @@ END;
 	protected static function parseParams( $params ) {
 		$args = [];
 		foreach ( $params as $param ) {
-			$param = preg_replace( "/\s\s+/", ' ', $param ); // whitespace
-			$param_parts = explode( "=", $param, 2 );
+			$param_parts = preg_split( '/\s*=\s*/', $param, 2 );
 			if ( count( $param_parts ) < 2 ) {
 				$args[$param_parts[0]] = null;
 			} else {
-				list( $name, $value ) = $param_parts;
+				[ $name, $value ] = $param_parts;
 				$args[$name] = $value;
 			}
 		}
@@ -159,11 +196,58 @@ END;
 	}
 
 	/**
-	 * Whether the parser preserves external variable case.
+	 * Substitute parameters into a string (command, environment variable, etc.).
 	 *
-	 * @return bool False, is external variables' names are brought to lowercase, true otherwise.
+	 * @param string|array $template The string(s) in which parameters are to be substituted.
+	 * @param array $parameters Validated parameters.
+	 *
+	 * @return string|array The string(s) with substituted parameters.
 	 */
-	public static function preservesCase() {
-		return static::$preserve_external_variables_case; // late binding.
+	protected function substitute( $template, array $parameters ) {
+		foreach ( $parameters as $name => $value ) {
+			$template = preg_replace( '/\\$' . preg_quote( $name, '/' ) . '\\$/', $value, $template );
+		}
+		return $template;
+	}
+
+	/**
+	 * Suppress warnings absolutely.
+	 */
+	protected static function suppressWarnings() {
+		if ( method_exists( AtEase::class, 'suppressWarnings' ) ) {
+			// MW >= 1.33
+			AtEase::suppressWarnings();
+		} else {
+			suppressWarnings();
+		}
+	}
+
+	/**
+	 *  Restore warnings.
+	 */
+	protected static function restoreWarnings() {
+		if ( method_exists( AtEase::class, 'restoreWarnings' ) ) {
+			// MW >= 1.33
+			AtEase::restoreWarnings();
+		} else {
+			restoreWarnings();
+		}
+	}
+
+	/**
+	 * Instead of producing a warning, throw an exception.
+	 * @throws Exception
+	 */
+	protected static function throwWarnings() {
+		set_error_handler( static function ( $errno, $errstr ) {
+			throw new Exception( $errstr );
+		} );
+	}
+
+	/**
+	 * Resume warnings.
+	 */
+	protected static function stopThrowingWarnings() {
+		restore_error_handler();
 	}
 }

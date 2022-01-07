@@ -13,11 +13,12 @@ class EDGetData extends SpecialPage {
 	/**
 	 * Constructor
 	 */
-	function __construct() {
+	public function __construct() {
 		parent::__construct( 'GetData' );
 	}
 
-	function execute( $query ) {
+	/** @inheritDoc */
+	public function execute( $query ) {
 		$this->getOutput()->disable();
 		$this->setHeaders();
 
@@ -88,7 +89,7 @@ class EDGetData extends SpecialPage {
 		print $text;
 	}
 
-	// phpcs:ignore MediaWiki.Commenting.FunctionComment.MissingDocumentationProtected
+	/** @inheritDoc */
 	protected function getGroupName() {
 		return 'pagetools';
 	}

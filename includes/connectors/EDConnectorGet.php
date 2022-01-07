@@ -1,4 +1,6 @@
 <?php
+use MediaWiki\MediaWikiServices;
+
 /**
  * Base abstract class for connectors that send a GET request:
  * EDConnectorWeb and EDConnectorSoap. Both are cached.
@@ -8,49 +10,33 @@
  *
  */
 abstract class EDConnectorGet extends EDConnectorHttp {
-	/** @var int $tries How many times to try an HTTP request. */
-	private static $tries = 3;
+	use EDConnectorCached; // uses cache.
 
-	// Cache variables.
-	/** @var bool $cache_set_up Is the cache set up? */
-	private static $cache_set_up;
-	/** @var string|null $cache_table Cache table name. */
-	private static $cache_table;
-
-	/** @var int Number of seconds before cache expires. */
-	private $cache_expiration;
-	/** @var bool Whether the data can be fetched from stale cache. */
-	private $allow_stale_cache;
-
-	/** @var int When the cache was cached. */
-	private $cached_time;
-	/** @var bool Is the cache fresh. */
-	private $cache_fresh;
+	/** @var int $maxTries How many times to try an HTTP request. */
+	private static $maxTries = 3;
+	/** @var int $tries How many tries have actually happened. */
+	private $tries = 0;
 	/** @var int Timestamp of when the result was fetched. */
 	private $time;
 
 	/**
 	 * Constructor. Analyse parameters and wiki settings; set $this->errors.
 	 *
-	 * @param array $args An array of arguments for parser/Lua function.
+	 * @param array &$args Arguments to parser or Lua function; processed by this constructor.
+	 * @param Title $title A Title object.
 	 */
-	protected function __construct( array $args ) {
-		parent::__construct( $args );
+	protected function __construct( array &$args, Title $title ) {
+		parent::__construct( $args, $title );
 
 		// Cache.
-		global $edgCacheTable;
-		self::$cache_set_up = (bool)$edgCacheTable;
-		self::$cache_table = $edgCacheTable;
-
 		// Cache expiration.
-		global $edgCacheExpireTime;
-		$this->cache_expiration = array_key_exists( 'cache seconds', $args )
-			? max( $args['cache seconds'], $edgCacheExpireTime )
-			: $edgCacheExpireTime;
-
-		// Allow to use stale cache.
-		global $edgAlwaysAllowStaleCache;
-		$this->allow_stale_cache = array_key_exists( 'use stale cache', $args ) || $edgAlwaysAllowStaleCache;
+		$cache_expires_local = array_key_exists( 'cache seconds', $args ) ? $args['cache seconds'] : 0;
+		$cache_expires_global = array_key_exists( 'min cache seconds', $args ) ? $args['min cache seconds'] : 0;
+		$cache_expires = max( $cache_expires_local, $cache_expires_global );
+		// Allow using stale cache.
+		$allow_stale_cache = array_key_exists( 'use stale cache', $args )
+			|| array_key_exists( 'always use stale cache', $args );
+		$this->setupCache( $cache_expires, $allow_stale_cache );
 	}
 
 	/**
@@ -58,69 +44,55 @@ abstract class EDConnectorGet extends EDConnectorHttp {
 	 * It is presumed that there are no errors in parameters and wiki settings.
 	 * Set $this->values and $this->errors.
 	 *
-	 * @return bool True on success, false if error were encountered.
+	 * @return bool True on success, false if errors were encountered.
 	 */
 	public function run() {
-		$this->cache_time = null;
-		$this->cache_fresh = false;
-
-		$cached = false;
-		// Is the cache set up, present and fresh?
-		if ( self::$cache_set_up && ( $this->cache_expiration !== 0 || $this->allow_stale_cache ) ) {
-			// Cache set up and can be used.
-			$cached = $this->cached();
-		}
-
-		// If there is no fresh cache, try to get from the web.
-		$cache_present = (bool)$cached;
-		$tries = 0;
-		if ( !self::$cache_set_up || !$cache_present || !$this->cache_fresh || $this->cache_expiration === 0 ) {
-			// Allow extensions or LocalSettings.php to alter HTTP options.
-			Hooks::run( 'ExternalDataBeforeWebCall', [ 'get', $this->real_url, $this->options ] );
-			do {
-				// Actually send a request.
-				$contents = $this->fetcher(); // Late binding; fetcher() is pure virtual. Also sets $this->headers.
-			} while ( !$contents && ++$tries <= self::$tries );
-			if ( $contents ) {
-				// Fetched successfully.
-				$this->cache_fresh = true;
+		$contents = $this->callCached( function ( $url, array $options ) /* $this is bound. */ {
+			return $this->callThrottled( function ( $url, array $options ) /* $this is bound again */ {
+				// Allow extensions or LocalSettings.php to alter HTTP options.
+				if ( class_exists( '\MediaWiki\HookContainer\HookContainer' ) ) {
+					$hookContainer = MediaWikiServices::getInstance()->getHookContainer();
+					$hookContainer->run( 'ExternalDataBeforeWebCall', [ 'get', $url, $options ], [] );
+				} else {
+					Hooks::run( 'ExternalDataBeforeWebCall', [ 'post', $url, $options ] );
+				}
+				do {
+					// Actually send a request.
+					$contents = $this->fetcher(); // Late binding; fetcher() is pure virtual. Also sets $this->headers.
+				} while ( !$contents && ++$this->tries <= self::$maxTries );
 				// Encoding needs to be detected from HTTP headers this early and not later,
 				// during text parsing, so that the converted text may be cached.
-				// Try HTTP headers.
-				if ( !$this->encoding ) {
-					$this->encoding = EDEncodingConverter::fromHeaders( $this->headers );
-				}
-				$contents = EDEncodingConverter::toUTF8( $contents, $this->encoding );
-				$this->time = time();
-				// Update cache, if possible and required.
-				if ( self::$cache_set_up && $this->cache_expiration !== 0 ) {
-					$this->cache( $contents, $cache_present );
-				}
-			} else {
-				// Not fetched.
-				if ( $cache_present && $this->allow_stale_cache ) {
-					// But can serve stale cache, if any and allowed.
-					$contents = $cached;
-					$this->cache_fresh = false;
-					$this->time = $this->cached_time;
-				} else {
-					// Nothing to serve.
-					$this->error( 'externaldata-db-could-not-get-url', $this->original_url, self::$tries );
-					return false;
-				}
-			}
-		} else {
-			// We have a fresh cache; so serve it.
-			$contents = $cached;
-			$this->time = $this->cached_time;
-		}
+				// HTTP headers are not cached, therefore, they are not available,
+				// if the text is fetched from the cache.
+				return $this->convert2Utf8( $contents );
+			}, $url, $options );
+		}, $this->realUrl, $this->options );
 
-		$this->values = $this->parse( $contents, [
-			'__time' => [ $this->time ],
-			'__stale' => [ !$this->cache_fresh ],
-			'__tries' => [ $tries ]
-		] );
-		return !$this->errors();
+		if ( $contents ) {
+			$this->add( [
+				'__time' => [ $this->time ],
+				'__cached' => [ $this->cached ],
+				'__stale' => [ !$this->cacheFresh ],
+				'__tries' => [ $this->tries ]
+			] );
+			if ( $this->waitTill ) {
+				// Throttled, but there was a cached value.
+				$this->add( [ '__throttled_till' => [ $this->waitTill ] ] );
+			}
+			$this->add( $this->parse( $contents, $this->encoding ) );
+			$this->error( $this->parseErrors );
+			return !$this->errors();
+		} else {
+			// Nothing to serve.
+			if ( $this->waitTill ) {
+				// It was throttled, and there was no cached value.
+				$this->error( 'externaldata-throttled', $this->originalUrl, (int)ceil( $this->waitTill ) );
+			} else {
+				// It wasn't throttled; just could not get it.
+				$this->error( 'externaldata-db-could-not-get-url', $this->originalUrl, self::$maxTries );
+			}
+			return false;
+		}
 	}
 
 	/**
@@ -130,39 +102,4 @@ abstract class EDConnectorGet extends EDConnectorHttp {
 	 * @return string Fetched text.
 	 */
 	abstract protected function fetcher();
-
-	/**
-	 * Get cached value, if any. It is assumed that the cache is set up.
-	 * Sets $this->cached_time and $this->cache_fresh.
-	 *
-	 * @return string|null The cached value; null if none.
-	 */
-	private function cached() {
-		// Check the cache (only the first 254 chars of the url).
-		$dbr = wfGetDB( DB_REPLICA );
-		$row = $dbr->selectRow( self::$cache_table, '*', [ 'url' => substr( $this->real_url, 0, 254 ) ], __METHOD__ );
-		if ( $row ) {
-			$this->cached_time = $row->req_time;
-			$this->cache_fresh = $this->cache_expiration !== 0 && time() - $this->cached_time <= $this->cache_expiration;
-			return $row->result;
-		} else {
-			return null;
-		}
-	}
-
-	/**
-	 * Cache text. It is assumed that the cache is set up.
-	 *
-	 * @param string $contents Text to be cached.
-	 * @param bool $old_cache True, if there was an old cache.
-	 */
-	private function cache( $contents, $old_cache ) {
-		$dbw = wfGetDB( DB_MASTER );
-		// Delete the old entry, if one exists.
-		if ( $old_cache ) {
-			$dbw->delete( self::$cache_table, [ 'url' => substr( $this->real_url, 0, 254 ) ] );
-		}
-		// Insert contents into the cache table.
-		$dbw->insert( self::$cache_table, [ 'url' => substr( $this->real_url, 0, 254 ), 'result' => $contents, 'req_time' => time() ] );
-	}
 }

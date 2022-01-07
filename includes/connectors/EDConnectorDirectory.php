@@ -13,24 +13,29 @@ class EDConnectorDirectory extends EDConnectorPath {
 	/** @var string File in directory. */
 	private $file_name;
 	/** @var string Real path to $directory. */
-	private $real_directory;
+	protected $real_directory;
 
 	/**
 	 * Constructor. Analyse parameters and wiki settings; set $this->errors.
 	 *
-	 * @param array $args An array of arguments for parser/Lua function.
-	 *
+	 * @param array &$args Arguments to parser or Lua function; processed by this constructor.
+	 * @param Title $title A Title object.
 	 */
-	public function __construct( array $args ) {
-		parent::__construct( $args );
+	protected function __construct( array &$args, Title $title ) {
+		parent::__construct( $args, $title );
 
 		// Parameters specific to {{#get_file_data:}} / mw.ext.externalData.getFileData.
 		if ( isset( $args['directory'] ) ) {
 			$this->directory = $args['directory'];
-			if ( isset( $args['DirectoryPath'] ) ) {
-				$this->real_directory = $args['DirectoryPath'];
+			if ( isset( $args['path'] ) ) {
+				if ( is_dir( $args['path'] ) ) {
+					$this->real_directory = $args['path'];
+				} else {
+					// Not a directory.
+					$this->error( 'externaldata-not-a-directory', $this->directory );
+				}
 			} else {
-				// No directory defined in $edgDirectoryPath.
+				// No directory defined in 'path'.
 				$this->error( 'externaldata-no-directory', $this->directory );
 			}
 		} else {
@@ -53,12 +58,17 @@ class EDConnectorDirectory extends EDConnectorPath {
 	 * @return bool True on success, false if error were encountered.
 	 */
 	public function run() {
-		$this->real_path = realpath( $this->real_directory . $this->file_name );
-		if ( $this->real_path === false || strpos( $this->real_path, $this->real_directory ) !== 0 ) {
+		$this->realPath = realpath( $this->real_directory . $this->file_name );
+		if (
+			$this->realPath === false ||
+			strpos( $this->realPath, $this->real_directory ) !== 0 // no .
+		) {
 			// No file found in directory.
 			$this->error( 'externaldata-no-file-in-directory', $this->directory, $this->file_name );
 			return false;
 		}
-		return $this->getDataFromPath( $this->directory . $this->file_name );
+		$values = $this->getDataFromPath( $this->realPath, $this->directory . ':' . $this->file_name );
+		$this->add( $values );
+		return $values !== null;
 	}
 }

@@ -7,35 +7,52 @@
  *
  */
 abstract class EDConnectorPath extends EDConnectorBase {
-	/** @var bool $needs_parser Needs a EDParser* object. */
-	protected static $needs_parser = true;
+	use EDConnectorParsable; // needs parser.
 
 	/** @var string Real filepath. */
-	protected $real_path;
+	protected $realPath;
+
+	/**
+	 * Constructor. Analyse parameters and wiki settings; set $this->errors.
+	 *
+	 * @param array &$args Arguments to parser or Lua function; processed by this constructor.
+	 * @param Title $title A Title object.
+	 */
+	protected function __construct( array &$args, Title $title ) {
+		// Parser.
+		$this->prepareParser( $args );
+		$this->error( $this->parseErrors );
+
+		parent::__construct( $args, $title );
+	}
 
 	/**
 	 * Get data from absolute filepath. Set $this->values.
 	 *
+	 * @param string $path Real path to the file.
 	 * @param string $alias An alias for real file path to show in error messages.
 	 *
-	 * @return bool True on success, false if error were encountered.
+	 * @return array|null An array of values on success, null if error were encountered.
 	 *
 	 */
-	protected function getDataFromPath( $alias ) {
-		if ( !file_exists( $this->real_path ) ) {
+	protected function getDataFromPath( $path, $alias ) {
+		if ( !file_exists( $path ) ) {
 			$this->error( 'externaldata-missing-file', $alias );
-			return false;
+			return null;
 		}
-		$file_contents = file_get_contents( $this->real_path );
+		$file_contents = file_get_contents( $path );
 		if ( empty( $file_contents ) ) {
 			// Show an error message if there's nothing there.
 			$this->error( 'externaldata-empty-file', $alias );
-			return false;
+			return null;
 		}
-		$file_contents = EDEncodingConverter::toUTF8( $file_contents, $this->encoding );
-		$this->values = $this->parse( $file_contents, [
+		$this->add( [
+			'__file' => [ $alias ],
 			'__time' => [ time() ]
 		] );
-		return true;
+		$file_contents = $this->toUTF8( $file_contents, $this->encoding );
+		$values = $this->parse( $file_contents, $this->encoding );
+		$this->error( $this->parseErrors );
+		return $values;
 	}
 }

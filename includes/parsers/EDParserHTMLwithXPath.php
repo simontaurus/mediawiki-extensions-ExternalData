@@ -7,29 +7,16 @@
 
 class EDParserHTMLwithXPath extends EDParserXMLwithXPath {
 	/**
-	 * Constructor.
-	 *
-	 * @param array $params A named array of parameters passed from parser or Lua function.
-	 *
-	 * @throws MWException.
-	 *
-	 */
-	public function __construct( array $params ) {
-		parent::__construct( $params );
-	}
-
-	/**
 	 * Parse the text as HTML. Called as $parser( $text ) as syntactic sugar.
 	 *
 	 * @param string $text The text to be parsed.
-	 * @param ?array $defaults The intial values.
 	 *
 	 * @return array A two-dimensional column-based array of the parsed values.
 	 *
 	 * @throws EDParserException
 	 *
 	 */
-	public function __invoke( $text, $defaults = [] ) {
+	public function __invoke( $text ) {
 		$doc = new DOMDocument( '1.0', 'UTF-8' );
 		// Remove whitespaces.
 		$doc->preserveWhiteSpace = false;
@@ -57,7 +44,7 @@ class EDParserHTMLwithXPath extends EDParserXMLwithXPath {
 		} catch ( Exception $e ) {
 			throw new EDParserException( 'externaldata-caught-exception-parsing-html', $e->getMessage() );
 		}
-		$values = EDParserBase::__invoke( $text, $defaults );
+		$values = EDParserBase::__invoke( $text );
 		$domxpath = new DOMXPath( $doc );
 		$internalErrors = libxml_use_internal_errors( true ); // -- remember.
 		foreach ( $this->external as $xpath ) {
@@ -68,7 +55,7 @@ class EDParserHTMLwithXPath extends EDParserXMLwithXPath {
 			} catch ( Exception $e ) {
 				throw new EDParserException( 'externaldata-xpath-invalid', $xpath, $e->getMessage() );
 			}
-			if ( is_a( $entries, 'DOMNodeList' ) ) {
+			if ( $entries instanceof DOMNodeList ) {
 				// It's a list of DOM nodes.
 				foreach ( $entries as $entry ) {
 					$nodesArray[] = self::filterEmptyNodes( $entry->textContent );

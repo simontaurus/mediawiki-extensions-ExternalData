@@ -2,11 +2,13 @@
 	"@metadata": {
 		"authors": [
 			"Kly",
-			"LNDDYL"
+			"LNDDYL",
+			"列维劳德"
 		]
 	},
 	"getdata": "取得資料",
 	"externaldata-desc": "允許外部 URL、資料庫，以及其它來源檢索結構化資料",
+	"externaldata-smw-needed": "錯誤：必須安裝 Semantic MediaWiki 才能調用{{#store_external_table:}}。",
 	"externaldata-no-param-specified": "錯誤：未指定「$1」參數。",
 	"externaldata-param-type-error": "錯誤：參數 $1 必須是 $2 類型。",
 	"externaldata-php-library-missing": "錯誤：缺少 $2 所需的 PHP 函式庫 $1。",
@@ -23,12 +25,13 @@
 	"externaldata-db-incomplete-information": "錯誤：此資料庫的 ID $1 資訊不完整（$2）。",
 	"externaldata-db-could-not-get-url": "在 $2 {{PLURAL:$2|次嘗試}}後仍無法取得 URL $1。",
 	"externaldata-db-unknown-type": "錯誤：無效資料庫類型 $1。",
-	"externaldata-db-could-not-connect": "錯誤：無法連結至資料庫。",
+	"externaldata-db-could-not-connect": "錯誤：無法連結至資料庫（$1）。",
 	"externaldata-db-unknown-database": "錯誤：無法選擇指定 ID 為 $1 的資料庫。",
 	"externaldata-db-no-return-values": "錯誤：沒有回傳指定的值。",
-	"externaldata-db-invalid-query": "查詢 $1 為無效。",
+	"externaldata-db-invalid-query": "查詢 $1 為無效（$2）。",
 	"externaldata-db-too-many-joins": "JOIN 條件數量（目前為 $1）不能超過表格數量（$2）",
 	"externaldata-db-invalid-join": "無效的 JOIN 條件 $1：每個部份都應包含「=」符號。",
+	"externaldata-db-empty-rowset": "查詢 $1 回傳空白的列集合。",
 	"externaldata-mongodb-unknown-collection": "錯誤：未知的 MongoDB 集合 $1。",
 	"externaldata-mongodb-aggregation-failed": "MongoDB 聚合失敗，錯誤為 $1",
 	"externaldata-format-unavailable": "缺少函式庫：$1，在使用不帶 '$3' 選項的 '$2' 格式時為必須。",
@@ -46,8 +49,12 @@
 	"externaldata-undefined-file": "檔案 $1 未定義。",
 	"externaldata-missing-file": "缺少檔案 $1。",
 	"externaldata-empty-file": "無法取得檔案 $1 的內容。",
-	"externaldata-no-file-in-directory": "目錄 $1 下沒有檔案 $1。",
+	"externaldata-no-file-in-directory": "目錄 $1 下沒有檔案 $2。",
 	"externaldata-no-directory": "目錄 $1 未定義。",
+	"externaldata-exe-shell-disabled": "錯誤：PHP 管理員已禁用存取殼層。",
+	"externaldata-exe-incomplete-information": "錯誤：此 $1 命令 ID ($2) 有未完成的資訊",
+	"externaldata-exe-illegal-parameter": "錯誤：$1 程式的 $2 參數擁有 $3 非法值。",
+	"externaldata-exe-error": "錯誤：$1 程式送回退出代碼 $2。消息：$3。",
 	"externaldata-no-local-variable": "錯誤：未設定本地變數「$1」。",
 	"externaldata-no-template": "錯誤：沒有指定模板。"
 }

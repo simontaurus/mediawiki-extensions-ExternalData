@@ -8,7 +8,7 @@
 
 class EDParserCSV extends EDParserBase {
 	/** @var bool The processed text contains a header line. */
-	private $header = false;
+	private $header;
 	/** @var string Column delimiter. */
 	private $delimiter = ',';
 
@@ -30,15 +30,18 @@ class EDParserCSV extends EDParserBase {
 	}
 
 	/**
-	 * Parse the text. Called as $parser( $text ) as syntactic sugar.
+	 * Parse the comma-separated text. Called as $parser( $text, $defaults ) as syntactic sugar.
+	 *
+	 * Reload the method in descendant classes, calling parent::__invoke() in the beginning.
+	 * Apply mapAndFilter() in the end.
 	 *
 	 * @param string $text The text to be parsed.
-	 * @param ?array $defaults The intial values.
 	 *
 	 * @return array A two-dimensional column-based array of the parsed values.
 	 *
 	 */
-	public function __invoke( $text, $defaults = [] ) {
+	public function __invoke( $text ) {
+		$values = parent::__invoke( $text );
 		// from http://us.php.net/manual/en/function.str-getcsv.php#88311
 		// str_getcsv() is a function that was only added in PHP 5.3.0,
 		// so use the much older fgetcsv() if it's not there
@@ -51,12 +54,12 @@ class EDParserCSV extends EDParserBase {
 		//} else {
 			$fiveMBs = 5 * 1024 * 1024;
 			$fp = fopen( "php://temp/maxmemory:$fiveMBs", 'r+' );
-			fputs( $fp, $text );
+			fwrite( $fp, $text );
 			rewind( $fp );
 			$table = [];
 			// phpcs:ignore MediaWiki.ControlStructures.AssignmentInControlStructures.AssignmentInControlStructures
 			while ( $line = fgetcsv( $fp, 0, $this->delimiter ) ) {
-				array_push( $table, $line );
+				$table[] = $line;
 			}
 			fclose( $fp );
 		// }
@@ -107,7 +110,7 @@ class EDParserCSV extends EDParserBase {
 			$header_vals = array_shift( $table );
 			// On the off chance that there are one or more blank
 			// lines at the beginning, cycle through.
-			while ( count( $header_vals ) == 0 ) {
+			while ( count( $header_vals ) === 0 ) {
 				$header_vals = array_shift( $table );
 			}
 		}
@@ -129,7 +132,6 @@ class EDParserCSV extends EDParserBase {
 
 		// Now "flip" the data, turning it into a column-by-column
 		// array, instead of row-by-row.
-		$values = parent::__invoke( $text, $defaults );
 		foreach ( $table as $line ) {
 			for ( $i = 0; $i < $num_columns; $i++ ) {
 				// This check is needed in case it's an

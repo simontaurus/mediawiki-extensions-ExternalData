@@ -14,16 +14,16 @@ class EDConnectorFile extends EDConnectorPath {
 	/**
 	 * Constructor. Analyse parameters and wiki settings; set $this->errors.
 	 *
-	 * @param array $args An array of arguments for parser/Lua function.
-	 *
+	 * @param array &$args Arguments to parser or Lua function; processed by this constructor.
+	 * @param Title $title A Title object.
 	 */
-	public function __construct( array $args ) {
-		parent::__construct( $args );
+	protected function __construct( array &$args, Title $title ) {
+		parent::__construct( $args, $title );
 
 		if ( isset( $args['file'] ) ) {
 			$this->file = $args['file'];
-			if ( isset( $args['FilePath'] ) ) {
-				$this->real_path = $args['FilePath'];
+			if ( isset( $args['path'] ) ) {
+				$this->realPath = $args['path'];
 			} else {
 				// File not defined.
 				$this->error( 'externaldata-undefined-file', $this->file );
@@ -42,6 +42,10 @@ class EDConnectorFile extends EDConnectorPath {
 	 * @return bool True on success, false if error were encountered.
 	 */
 	public function run() {
-		return $this->getDataFromPath( $this->file );
+		$values = $this->getDataFromPath( $this->realPath, $this->file );
+		if ( $values ) {
+			$this->add( $values );
+		}
+		return $values !== null;
 	}
 }

@@ -11,10 +11,10 @@ class EDConnectorLdap extends EDConnectorBase {
 	private $filter;
 	/** @var bool Get all LDAP data. */
 	private $all;
-	/** @var string LDAP domain (key to $edgLDAPServer, etc.). */
+	/** @var string LDAP domain (key to $wgExternalDataSources, etc.). */
 	private $domain;
 	/** @var string Base DN for the directory. */
-	private $base_dn;
+	private $baseDn;
 	/** @var string Real LDAP server. */
 	private $server;
 	/** @var string Real LDAP user. */
@@ -27,15 +27,20 @@ class EDConnectorLdap extends EDConnectorBase {
 	/**
 	 * Constructor. Analyse parameters and wiki settings; set $this->errors.
 	 *
-	 * @param array $args An array of arguments for parser/Lua function.
-	 *
+	 * @param array &$args Arguments to parser or Lua function; processed by this constructor.
+	 * @param Title $title A Title object.
 	 */
-	public function __construct( array $args ) {
-		parent::__construct( $args );
+	protected function __construct( array &$args, Title $title ) {
+		parent::__construct( $args, $title );
 
 		// Parameters specific for {{#get_ldap_data:}} and mw.ext.externalData.getLdapData.
 		if ( !function_exists( 'ldap_connect' ) ) {
-			$this->error( 'externaldata-missing-library', 'php-ldap', '{{#get_ldap_data:}}', 'mw.ext.externalData.getLdapData' );
+			$this->error(
+				'externaldata-missing-library',
+				'php-ldap',
+				'{{#get_ldap_data:}}',
+				'mw.ext.externalData.getLdapData'
+			);
 		}
 		if ( isset( $args['filter'] ) ) {
 			$this->filter = $args['filter'];
@@ -47,15 +52,15 @@ class EDConnectorLdap extends EDConnectorBase {
 		} else {
 			$this->error( 'externaldata-no-param-specified', 'domain' );
 		}
-		if ( isset( $args['LDAPServer'] ) ) {
-			$this->server = $args['LDAPServer'];
+		if ( isset( $args['server'] ) ) {
+			$this->server = $args['server'];
 		} else {
 			$this->error( 'externaldata-ldap-domain-not-defined', $this->domain );
 		}
-		$this->user = isset( $args['LDAPUser'] ) ? $args['LDAPUser'] : null;
-		$this->password = isset( $args['LDAPPass'] ) ? $args['LDAPPass'] : null;
-		if ( isset( $args['LDAPBaseDN'] ) ) {
-			$this->base_dn = $args['LDAPBaseDN'];
+		$this->user = isset( $args['user'] ) ? $args['user'] : null;
+		$this->password = isset( $args['password'] ) ? $args['password'] : null;
+		if ( isset( $args['base dn'] ) ) {
+			$this->baseDn = $args['base dn'];
 		} else {
 			$this->error( 'externaldata-ldap-domain-not-defined', $this->domain );
 		}
@@ -99,13 +104,13 @@ class EDConnectorLdap extends EDConnectorBase {
 				}
 			}
 		}
-		$this->values = $result;
+		$this->add( $result );
 		return true;
 	}
 
 	/**
 	 * Connect to LDAP server using server, username and password set by the constructor.
-	 * Set $this->connection.
+	 * Set $this->credentials.
 	 */
 	private function connectLDAP() {
 		$this->connection = ldap_connect( $this->server );
@@ -115,10 +120,8 @@ class EDConnectorLdap extends EDConnectorBase {
 			ldap_set_option( $this->connection, LDAP_OPT_REFERRALS, 0 );
 			$bound = false;
 			$exception = false;
-			// Suppress warnings.
-			set_error_handler( function () {
-				throw new Exception();
-			} );
+			// Throw exceptions instead of warnings.
+			self::throwWarnings();
 			try {
 				$bound = $this->user
 					   ? ldap_bind( $this->connection, $this->user, $this->password )
@@ -129,7 +132,7 @@ class EDConnectorLdap extends EDConnectorBase {
 				$exception = true;
 			}
 			// Restore warnings.
-			restore_error_handler();
+			self::stopThrowingWarnings();
 			if ( !$bound && !$exception /* Do not repeat  twice. */ ) {
 				$this->error( 'externaldata-ldap-unable-to-bind', $this->domain ); // not $this->server!
 				$this->connection = null;
@@ -145,7 +148,7 @@ class EDConnectorLdap extends EDConnectorBase {
 	 * @return array Search results.
 	 */
 	private function searchLDAP() {
-		$sr = ldap_search( $this->connection, $this->base_dn, $this->filter, array_values( $this->mappings ) );
+		$sr = ldap_search( $this->connection, $this->baseDn, $this->filter, array_values( $this->mappings ) );
 		$results = ldap_get_entries( $this->connection, $sr );
 		return $results;
 	}

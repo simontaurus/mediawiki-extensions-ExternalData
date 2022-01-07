@@ -6,39 +6,40 @@
  * @author Alexander Mashin
  */
 
-class EDParserJSONwithJSONPath extends EDParserBase {
-	/** @var bool $preserve_external_variables_case Whether external variables' names are case-sensitive for this format. */
-	protected static $preserve_external_variables_case = true;
-
-	/**
-	 * Constructor.
-	 *
-	 * @param array $params A named array of parameters passed from parser or Lua function.
-	 *
-	 */
-	public function __construct( array $params ) {
-		parent::__construct( $params );
-
-		$this->prefix_length = isset( $params['json offset'] ) ? intval( $params['json offset'] ) : 0;
-	}
+class EDParserJSONwithJSONPath extends EDParserJSON {
+	/** @var bool $keepExternalVarsCase Whether external variables' names are case-sensitive for this format. */
+	public $keepExternalVarsCase = true;
 
 	/**
 	 * Parse the text. Called as $parser( $text ) as syntactic sugar.
 	 *
 	 * @param string $text The text to be parsed.
-	 * @param ?array $defaults The intial values.
 	 *
 	 * @return array A two-dimensional column-based array of the parsed values.
 	 *
 	 */
-	public function __invoke( $text, $defaults = [] ) {
-		$json = new EDJsonObject( $text );
-		$values = parent::__invoke( $text, $defaults );
+	public function __invoke( $text ) {
+		$text = $this->removeTrailingComma( substr( $text, $this->prefixLength ) );
+		try {
+			$json = new EDJsonObject( $text );
+		} catch ( Exception $e ) {
+			throw new EDParserException( 'externaldata-invalid-json' );
+		}
+		$values = parent::__invoke( $text );
+		// Save the whole JSON tree for Lua.
+		$values['__json'] = [ $json->complete() ];
 		foreach ( $this->external as $jsonpath ) {
-			try {
-				$values[$jsonpath] = $json->get( $jsonpath );
-			} catch ( MWException $e ) {
-				throw new EDParserException( 'externaldata-jsonpath-error', $jsonpath );
+			if ( substr( $jsonpath, 0, 2 ) !== '__' && !array_key_exists( $jsonpath, $values ) ) {
+				// variable has not been set yet.
+				try {
+					$json_values = $json->get( $jsonpath );
+				} catch ( MWException $e ) {
+					throw new EDParserException( 'externaldata-jsonpath-error', $jsonpath );
+				}
+				// EDJsonObject::get() returns false if values are not found, array otherwise.
+				if ( $json_values !== false ) {
+					$values[$jsonpath] = $json_values;
+				}
 			}
 		}
 		return $values;

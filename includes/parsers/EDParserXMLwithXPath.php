@@ -6,9 +6,12 @@
  * @author Alexander Mashin
  */
 
-class EDParserXMLwithXPath extends EDParserBase {
-	/** @var bool $preserve_external_variables_case Whether external variables' names are case-sensitive for this format. */
-	protected static $preserve_external_variables_case = true;
+class EDParserXMLwithXPath extends EDParserXML {
+	/** @var bool $keepExternalVarsCase Whether external variables' names are case-sensitive for this format. */
+	public $keepExternalVarsCase = true;
+
+	/** @var string $defaultXmlnsPrefix Default prefix for xmlns. */
+	private $defaultXmlnsPrefix;
 
 	/**
 	 * Constructor.
@@ -20,41 +23,68 @@ class EDParserXMLwithXPath extends EDParserBase {
 	 */
 	public function __construct( array $params ) {
 		parent::__construct( $params );
+		if ( array_key_exists( 'default xmlns prefix', $params ) ) {
+			$this->defaultXmlnsPrefix = $params['default xmlns prefix'];
+		}
 	}
 
 	/**
 	 * Parse the text as XML. Called as $parser( $text ) as syntactic sugar.
 	 *
 	 * @param string $text The text to be parsed.
-	 * @param ?array $defaults The intial values.
 	 *
 	 * @return array A two-dimensional column-based array of the parsed values.
 	 *
 	 * @throws EDParserException
 	 *
 	 */
-	public function __invoke( $text, $defaults = [] ) {
+	public function __invoke( $text ) {
 		try {
 			$text = str_replace('xmlns=', 'ns=', $text); //see comments : https://www.php.net/manual/de/simplexmlelement.xpath.php
 			$xml = new SimpleXMLElement( $text );
 		} catch ( Exception $e ) {
 			throw new EDParserException( 'externaldata-invalid-xml', $e->getMessage() );
 		}
-		$values = parent::__invoke( $text, $defaults );
+
+		$values = parent::__invoke( $text );
+		// Save the whole XML tree for Lua.
+		$values['__xml'] = [ self::xml2Array( $xml ) ];
+
+		// Set default prefix for unprefixed xmlns's.
+		$namespaces = $xml->getDocNamespaces( true );
+		foreach ( $namespaces as $prefix => $namespace ) {
+			if ( !$prefix && $this->defaultXmlnsPrefix ) {
+				$namespaces[$this->defaultXmlnsPrefix] = $namespace;
+				$xml->registerXPathNamespace( $this->defaultXmlnsPrefix, $namespace );
+			}
+		}
 
 		foreach ( $this->external as $xpath ) {
-			// First, register any necessary XML namespaces, to
+			if ( substr( $xpath, 0, 2 ) === '__' ) {
+				// Special variables are not XPaths.
+				continue;
+			}
+			// Register any necessary XML namespaces, if not yet, to
 			// avoid "Undefined namespace prefix" errors.
-			$matches = [];
-			preg_match_all( '/[\/\@]([a-zA-Z0-9]*):/', $xpath, $matches );
-			foreach ( $matches[1] as $namespace ) {
-				$xml->registerXPathNamespace( $namespace, $ns );
+			// It's just a dirty hack.
+			if ( preg_match_all( '/[\/@]([a-zA-Z0-9]*):/', $xpath, $matches ) ) {
+				foreach ( $matches[1] as $prefix ) {
+					if ( !array_key_exists( $prefix, $namespaces ) ) {
+						$namespaces[$prefix] = $prefix;
+						$xml->registerXPathNamespace( $prefix, $prefix );
+					}
+				}
 			}
 
 			// Now, get all the matching values, and remove any empty results.
-			$nodes = self::filterEmptyNodes( $xml->xpath( $xpath ) );
-			if ( !$nodes ) {
-				continue;
+			$nodes = $xml->xpath( $xpath );
+			if ( $nodes ) {
+				$nodes = self::filterEmptyNodes( $nodes );
+				if ( !$nodes ) {
+					continue;
+				}
+			} else {
+				throw new EDParserException( 'externaldata-xpath-invalid', $xpath );
 			}
 
 			// Convert from SimpleXMLElement to string.
@@ -76,6 +106,21 @@ class EDParserXMLwithXPath extends EDParserBase {
 	}
 
 	/**
+	 * Convert SimpleXMLElement to a nested array.
+	 *
+	 * @param SimpleXMLElement $xml XML to convert.
+	 *
+	 * @return array
+	 */
+	private static function xml2Array( SimpleXMLElement $xml ): array {
+		$converted = [];
+		foreach ( (array)$xml as $index => $node ) {
+			$converted[$index] = is_a( $node, 'SimpleXMLElement' ) ? self::xml2Array( $node ) : $node;
+		}
+		return $converted;
+	}
+
+	/**
 	 * Filters out empty $nodes.
 	 *
 	 * @param mixed $nodes Nodes to filter. TODO: always array?
@@ -87,7 +132,7 @@ class EDParserXMLwithXPath extends EDParserBase {
 		if ( !is_array( $nodes ) ) {
 			return $nodes;
 		}
-		return array_filter( $nodes, function ( $node ) {
+		return array_filter( $nodes, static function ( $node ) {
 			return trim( $node[0] ) !== '';
 		} );
 	}
