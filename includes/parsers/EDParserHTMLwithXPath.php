@@ -6,17 +6,23 @@
  */
 
 class EDParserHTMLwithXPath extends EDParserXMLwithXPath {
+	/** @const string NAME The name of this format. */
+	public const NAME = 'HTML';
+	/** @const array EXT The usual file extensions of this format. */
+	protected const EXT = [ 'htm', 'html' ];
+
+	/** @const int GENERICITY The greater, the more this format is likely to succeed on a random input. */
+	public const GENERICITY = 5;
+
 	/**
 	 * Parse the text as HTML. Called as $parser( $text ) as syntactic sugar.
 	 *
 	 * @param string $text The text to be parsed.
-	 *
+	 * @param string|null $path URL or filesystem path that may be relevant to the parser.
 	 * @return array A two-dimensional column-based array of the parsed values.
-	 *
 	 * @throws EDParserException
-	 *
 	 */
-	public function __invoke( $text ) {
+	public function __invoke( $text, $path = null ): array {
 		$doc = new DOMDocument( '1.0', 'UTF-8' );
 		// Remove whitespaces.
 		$doc->preserveWhiteSpace = false;
@@ -37,7 +43,7 @@ class EDParserHTMLwithXPath extends EDParserXMLwithXPath {
 			// Give the log a rest. See https://stackoverflow.com/a/10482622.
 			$internalErrors = libxml_use_internal_errors( true ); // -- remember.
 			if ( !$doc->loadHTML( $html ) ) {
-				throw EDParserException( 'externaldata-parsing-html-failed' );
+				throw new EDParserException( 'externaldata-parsing-html-failed' );
 			}
 			libxml_clear_errors();
 			libxml_use_internal_errors( $internalErrors ); // -- restore.
@@ -53,7 +59,15 @@ class EDParserHTMLwithXPath extends EDParserXMLwithXPath {
 			try {
 				$entries = $domxpath->evaluate( $xpath );
 			} catch ( Exception $e ) {
-				throw new EDParserException( 'externaldata-xpath-invalid', $xpath, $e->getMessage() );
+				throw new EDParserException(
+					'externaldata-invalid-format-explicit',
+					$xpath,
+					'XPath',
+					$e->getMessage()
+				);
+			}
+			if ( $entries === false ) {
+				throw new EDParserException( 'externaldata-invalid-format-explicit', $xpath, 'XPath' );
 			}
 			if ( $entries instanceof DOMNodeList ) {
 				// It's a list of DOM nodes.

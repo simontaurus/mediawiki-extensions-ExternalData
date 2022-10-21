@@ -7,7 +7,7 @@
  * @author Alexander Mashin
  *
  */
-class EDConnectorSoap extends EDConnectorGet {
+class EDConnectorSoap extends EDConnectorHttp {
 	/** @var bool $keepExternalVarsCase External variables' case ought to be preserved. */
 	public $keepExternalVarsCase = true;
 
@@ -32,7 +32,7 @@ class EDConnectorSoap extends EDConnectorGet {
 			$this->error(
 				'externaldata-missing-library',
 				'SOAP',
-				'{{#get_soap_data:}}',
+				'#get_soap_data',
 				'mw.ext.getExternalData.getSoapData'
 			);
 		}
@@ -54,16 +54,19 @@ class EDConnectorSoap extends EDConnectorGet {
 	/**
 	 * Fetch the SOAP data.
 	 *
+	 * @param string $url URL to fetch.
+	 * @param array $options HTTP options (unused).
 	 * @return string|null Text content fetched.
 	 */
-	protected function fetcher() {
+	protected function fetcher( $url, array $options ) {
 		// We do not want to repeat error messages self::$tries times.
 		static $log_errors_client = true;
 		static $log_errors_request = true;
 		// Suppress warnings.
 		self::suppressWarnings();
 		try {
-			$client = new SoapClient( $this->realUrl, [ 'trace' => true ] );
+			// @phan-suppress-next-line PhanUndeclaredClassMethod Optional extension
+			$client = new SoapClient( $url, [ 'trace' => true ] );
 		} catch ( Exception $e ) {
 			if ( $log_errors_client ) {
 				$this->error( 'externaldata-caught-exception-soap', $e->getMessage() );
@@ -84,6 +87,7 @@ class EDConnectorSoap extends EDConnectorGet {
 			return null;
 		}
 		if ( $result ) {
+			// @phan-suppress-next-line PhanUndeclaredClassMethod Optional extension
 			$this->headers = self::headers( $client->__getLastResponseHeaders() );
 			$response = $this->responseName;
 			return $result->$response;

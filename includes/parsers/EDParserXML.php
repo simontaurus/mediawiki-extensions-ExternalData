@@ -6,6 +6,11 @@
  */
 
 abstract class EDParserXML extends EDParserBase {
+	/** @const string NAME The name of this format. */
+	public const NAME = 'XML';
+	/** @const array EXT The usual file extensions of this format. */
+	protected const EXT = [ 'xml' ];
+
 	/**
 	 * Add newlines before closing tags and after opening ones to facilitate cutting out fragments, if ordered.
 	 *

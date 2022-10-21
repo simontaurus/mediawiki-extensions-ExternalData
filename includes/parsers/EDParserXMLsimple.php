@@ -17,16 +17,27 @@ class EDParserXMLsimple extends EDParserXML {
 	private static $ampersandReplacement = 'THIS IS A LONG STRING USED AS A REPLACEMENT FOR AMPERSANDS 55555555';
 
 	/**
+	 * Constructor.
+	 * @param array $params A named array of parameters passed from parser or Lua function.
+	 */
+	public function __construct( array $params ) {
+		parent::__construct( $params );
+
+		// This is important for the right choice of format, if it is "auto".
+		if ( array_key_exists( 'use xpath', $params ) ) {
+			throw new EDParserException( 'dummy message' );
+		}
+	}
+
+	/**
 	 * Parse the text as XML. Called as $parser( $text ) as syntactic sugar.
 	 *
 	 * @param string $text The text to be parsed.
-	 *
+	 * @param string|null $path URL or filesystem path that may be relevant to the parser.
 	 * @return array A two-dimensional column-based array of the parsed values.
-	 *
 	 * @throws EDParserException
-	 *
 	 */
-	public function __invoke( $text ) {
+	public function __invoke( $text, $path = null ): array {
 		self::$xmlValues = parent::__invoke( $text );
 
 		// Remove comments from XML - for some reason, xml_parse()
@@ -43,7 +54,7 @@ class EDParserXMLsimple extends EDParserXML {
 		if ( !xml_parse( $xml_parser, $xml, true ) ) {
 			throw new EDParserException( 'externaldata-xml-error',
 				xml_error_string( xml_get_error_code( $xml_parser ) ),
-				xml_get_current_line_number( $xml_parser )
+				(string)xml_get_current_line_number( $xml_parser )
 			);
 		}
 		xml_parser_free( $xml_parser );

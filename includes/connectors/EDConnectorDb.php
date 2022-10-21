@@ -7,8 +7,11 @@
  *
  */
 abstract class EDConnectorDb extends EDConnectorBase {
-	/** @var string Database ID. */
-	protected $dbId;	// Database ID.
+	/** @const string ID_PARAM What the specific parameter identifying the connection is called. */
+	protected const ID_PARAM = 'db';
+
+	/** @var string|null Database ID. */
+	protected $dbId = null;	// Database ID.
 
 	/** @var string Database type. */
 	protected $type;
@@ -18,6 +21,8 @@ abstract class EDConnectorDb extends EDConnectorBase {
 	// SQL query components.
 	/** @var array Columns to query. */
 	protected $columns;
+	/** @var array $aliases Column aliases. */
+	protected $aliases = [];
 
 	/**
 	 * Constructor. Analyse parameters and wiki settings; set $this->errors.
@@ -29,25 +34,38 @@ abstract class EDConnectorDb extends EDConnectorBase {
 		parent::__construct( $args, $title );
 
 		// Specific parameters.
-		if ( isset( $args['db'] ) ) {
-			$this->dbId = $args['db'];
-		} elseif ( isset( $args['server'] ) ) {
-			// For backwards-compatibility - 'db' parameter was
-			// added in External Data version 1.3.
-			$this->dbId = $args['server'];
+		if ( isset( $args[self::ID_PARAM] ) ) {
+			$this->dbId = $args[self::ID_PARAM];
+		}
+
+		// Query parts.
+		$mappings = $this->mappings();
+		if ( count( $mappings ) === 0 || isset( $mappings['__all'] ) ) {
+			$this->columns = [ '*' ];
+		} else {
+			$this->columns = array_values( $mappings );
+		}
+		// Column aliases: the correspondence $external_variable => $column_name_in_query_result.
+		foreach ( $this->columns as $column ) {
+			// Deal with AS in external names.
+			$chunks = preg_split( '/\bas\s+/i', $column, 2 );
+			$alias = isset( $chunks[1] ) ? trim( $chunks[1] ) : $column;
+			// Deal with table prefixes in column names (internal_var=tbl1.col1).
+			if ( preg_match( '/[^.]+$/', $alias, $matches ) ) {
+				$alias = $matches[0];
+			}
+			$this->aliases[$column] = $alias;
 		}
 		if ( !$this->dbId ) {
-			$this->error( 'externaldata-no-param-specified', 'db' );
+			return; // further checks and initialisations are impossible.
 		}
 		if ( isset( $args['type'] ) ) {
-			$this->type = $args['type'];
+			$this->type = strtolower( $args['type'] );
 		} else {
 			$this->error( 'externaldata-db-incomplete-information', $this->dbId, 'type' );
 		}
 		// Database credentials.
 		$this->setCredentials( $args );	// late binding.
-		// Query parts.
-		$this->columns = array_values( $this->mappings );
 	}
 
 	/**
@@ -81,7 +99,7 @@ abstract class EDConnectorDb extends EDConnectorBase {
 		if ( !$rows ) {
 			return false;
 		}
-		$this->add( $this->processRows( $rows ) );
+		$this->add( $this->processRows( $rows, $this->aliases ) );
 		// $this->values = $this->processRows( $rows ); // late binding.
 		$this->disconnect(); // late binding.
 		return true;
@@ -113,13 +131,13 @@ abstract class EDConnectorDb extends EDConnectorBase {
 	protected function processRows( $rows, array $aliases = [] ): array {
 		$result = [];
 		foreach ( $rows as $row ) {
-			foreach ( $this->columns as $column ) {
+			foreach ( $row as $column => $_ ) {
 				$alias = isset( $aliases[$column] ) ? $aliases[$column] : $column;
 				if ( !isset( $result[$column] ) ) {
 					$result[$column] = [];
 				}
 				// Can be both array and object.
-				$result[$column][] = self::processField( is_array( $row ) ? $row[$alias] : $row->$alias );
+				$result[$column][] = self::processField( ( (array)$row )[$alias] );
 			}
 		}
 		return $result;

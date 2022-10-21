@@ -14,6 +14,9 @@ class EDConnectorExe extends EDConnectorBase {
 	use EDConnectorParsable; // needs parser.
 	use EDConnectorThrottled; // throttles calls.
 
+	/** @const string ID_PARAM What the specific parameter identifying the connection is called. */
+	protected const ID_PARAM = 'program';
+
 	/** @var string $program Program ID. */
 	private $program;
 	/** @var array $environment An array of environment variables. */
@@ -24,10 +27,6 @@ class EDConnectorExe extends EDConnectorBase {
 	private $command;
 	/** @var array $params Parameters to $command. */
 	private $params;
-	/** @var array $validatedParams Parameter values after filtering and applying defaults. */
-	private $validatedParams = [];
-	/** @var array $paramFilters An associative array of regular expression filters for parameters. */
-	private $paramFilters;
 	/** @var string $input This will be fed to program's standard input. */
 	private $input;
 	/** @var ?string $tempFile The program will send its output to a temporary file rather than stdout. */
@@ -55,17 +54,21 @@ class EDConnectorExe extends EDConnectorBase {
 
 		parent::__construct( $args, $title );
 
+		$this->program = isset( $args[self::ID_PARAM] ) ? $args[self::ID_PARAM] : null;
+
+		$this->params = $args;
+
 		if ( Shell::isDisabled() ) {
 			$this->error( 'externaldata-exe-shell-disabled' );
 		}
 
 		// Specific parameters.
 		$command = null;
-		if ( !isset( $args['program'] ) ) {
-			$this->error( 'externaldata-no-param-specified', 'program' );
+		if ( !isset( $args[self::ID_PARAM] ) ) {
+			$this->error( 'externaldata-no-param-specified', self::ID_PARAM );
 			return; // no need to continue.
 		}
-		$this->program = $args['program'];
+
 		// The command, stored as a secret in LocalSettings.php.
 		if ( isset( $args['command'] ) ) {
 			$command = $args['command'];
@@ -82,27 +85,6 @@ class EDConnectorExe extends EDConnectorBase {
 		$this->limits = self::defaultLimits();
 		if ( isset( $args['limits'] ) && is_array( $args['limits'] ) ) {
 			$this->limits = array_merge( $this->limits, $args['limits'] );
-		}
-
-		// Parameter filters.
-		if ( isset( $args['param filters'] ) && is_array( $args['param filters'] ) ) {
-			$this->paramFilters = $args['param filters'];
-		}
-
-		// Parameters.
-		// The required parameters are stored as a secret in LocalSettings.php.
-		$this->validatedParams = null;
-		if ( isset( $args['params'] ) && is_array( $args['params'] ) ) {
-			$this->validatedParams = $this->validateParams( $args, $args['params'], $this->paramFilters );
-		}
-
-		if ( $this->validatedParams ) {
-			// Substitute parameters in the shell command:
-			$command = $this->substitute( $command, $this->validatedParams );
-			// And in the environment variables.
-			foreach ( $this->environment as $_ => &$value ) {
-				$value = $this->substitute( $value, $this->validatedParams );
-			}
 		}
 
 		// Ignore warnings in stderr, if the exit code is 0.
@@ -131,11 +113,13 @@ class EDConnectorExe extends EDConnectorBase {
 		}
 
 		// Get program's output from a temporary file rather than standard output.
-		if ( isset( $args['temp'] ) && is_string( $args['temp'] ) ) {
+		global $wgTmpDirectory;
+		if ( $wgTmpDirectory && isset( $args['temp'] ) && is_string( $args['temp'] ) ) {
 			$hash = hash( 'fnv1a64', $this->input );
-			global $wgTmpDirectory;
-			$this->tempFile = preg_replace( '/\\$tmp\\$/', "$wgTmpDirectory/$hash", $args['temp'] );
-			$command = preg_replace( '/\\$tmp\\$/', "$wgTmpDirectory/$hash", $command );
+			// @phan-suppress-next-line PhanPossiblyUndeclaredVariable WTF?
+			$this->tempFile = str_replace( '$tmp$', "$wgTmpDirectory/$hash", $args['temp'] );
+			// @phan-suppress-next-line PhanPossiblyUndeclaredVariable WTF?
+			$command = str_replace( '$tmp$', "$wgTmpDirectory/$hash", $command );
 		}
 
 		$this->command = is_array( $command ) ? $command : explode( ' ', $command );
@@ -156,10 +140,9 @@ class EDConnectorExe extends EDConnectorBase {
 		$this->setupCache( $cache_expires, $allow_stale_cache );
 
 		// Throttle.
-		$template = isset( $args['throttle key'] ) ? $args['throttle key'] : null;
+		$key = isset( $args['throttle key'] ) ? $args['throttle key'] : null;
 		$interval = isset( $args['throttle interval'] ) ? $args['throttle interval'] : null;
-		if ( $template && $interval ) {
-			$key = $this->substitute( $template, $this->validatedParams + $this->environment );
+		if ( $key && $interval ) {
 			$this->setupThrottle( $title, $key, $interval );
 		}
 	}
@@ -177,41 +160,6 @@ class EDConnectorExe extends EDConnectorBase {
 			'memory' => $wgMaxShellMemory,
 			'filesize' => $wgMaxShellFileSize
 		];
-	}
-
-	/**
-	 * Validate parameters. Log an error if a required parameter is not supplied or a parameter has an illegal value.
-	 *
-	 * @param array $parameters User-supplied parameters.
-	 * @param array $defaults An array of parameter defaults. A numeric key means that the value is a required param.
-	 * @param array $filters An array of parameter filters (callables or regexes).
-	 *
-	 * @return array The validated parameters.
-	 */
-	private function validateParams( array $parameters, array $defaults, array $filters ): array {
-		$validated = [];
-		foreach ( $defaults as $key => $val ) {
-			$param = is_numeric( $key ) ? $val : $key;
-			$default = is_numeric( $key ) ? null : $val;
-			$value = isset( $parameters[$param] ) ? $parameters[$param] : $default;
-			if ( $value !== null ) {
-				if (
-					// no filter.
-					!isset( $filters[$param] )
-					// filter is a function.
-					|| is_callable( $filters[$param] ) && $filters[$param]( $value )
-					// filter is a regular expression.
-					|| is_string( $filters[$param] ) && preg_match( $filters[$param], $value )
-				) {
-					$validated[$param] = $value;
-				} else {
-					$this->error( 'externaldata-exe-illegal-parameter', $this->program, $param, $value );
-				}
-			} else {
-				$this->error( 'externaldata-no-param-specified', $param );
-			}
-		}
-		return $validated;
 	}
 
 	/**
@@ -243,13 +191,21 @@ class EDConnectorExe extends EDConnectorBase {
 					return false;
 				}
 				$exit_code = $result->getExitCode();
-				$output = $this->tempFile ? file_get_contents( $this->tempFile ) : $result->getStdout();
+				if ( $this->tempFile ) {
+					if ( !file_exists( $this->tempFile ) ) {
+						$error = "No temporary file {$this->tempFile}";
+						return false;
+					}
+					$output = file_get_contents( $this->tempFile );
+				} else {
+					$output = $result->getStdout();
+				}
 				$error = $result->getStderr();
 
 				if ( $exit_code === 0 && !( $error && !$this->ignoreWarnings ) ) {
 					$postprocessor = $this->postprocessor;
 					if ( $output && is_callable( $postprocessor ) ) {
-						$output = $postprocessor( $output, $this->validatedParams );
+						$output = $postprocessor( $output, $this->params );
 					}
 					return $output;
 				} else {
@@ -267,20 +223,20 @@ class EDConnectorExe extends EDConnectorBase {
 			] );
 			if ( $this->waitTill ) {
 				// Throttled, but there was a cached value.
-				$this->add( [ '__throttled_till' => [ $this->waitTill ] ], true );
+				$this->add( [ '__throttled_till' => [ $this->waitTill ] ] );
 			}
 			if ( $error ) {
 				// Let's save the ignored warning.
 				$this->add( [ '__warning' => [ $error ] ] );
 			}
-			$this->add( $this->parse( $output, $this->encoding ) );
+			$this->add( $this->parse( $output ) );
 			$this->error( $this->parseErrors );
 			return true;
 		} else {
 			// Nothing to serve.
 			if ( $this->waitTill ) {
 				// It was throttled, and there was no cached value.
-				$this->error( 'externaldata-throttled', $this->program, (int)ceil( $this->waitTill ) );
+				$this->error( 'externaldata-throttled', $this->program, (string)(int)ceil( $this->waitTill ) );
 			} else {
 				// It wasn't throttled; just could not get it.
 				$this->error( 'externaldata-exe-error', $this->program, $exit_code, $error );
@@ -309,14 +265,19 @@ class EDConnectorExe extends EDConnectorBase {
 					$params['data'] = "$id=__text";
 					$params['format'] = 'text';
 					$params = self::supplementParams( $params );
-					$connector = new self( $params, $parser->getTitle() );
-					if ( !$connector->errors() ) {
-						if ( $connector->run() ) {
-							$values = $connector->result();
-							return [ $values[$id][0], 'markerType' => 'nowiki' ];
+					$title = $parser->getTitle();
+					if ( $title ) {
+						// @phan-suppress-next-line SecurityCheck-ReDoS
+						$connector = new self( $params, $title );
+						if ( !$connector->errors() ) {
+							if ( $connector->run() ) {
+								$values = $connector->result();
+								return [ $values[$id][0], 'markerType' => 'nowiki' ];
+							}
 						}
+						return EDParserFunctions::formatErrorMessages( $connector->errors() );
 					}
-					return EDParserFunctions::formatErrorMessages( $connector->errors() );
+					return false;
 				}
 			);
 		}
@@ -409,19 +370,20 @@ class EDConnectorExe extends EDConnectorBase {
 	 * @param string $str Text to add wikilinks in dot format.
 	 * @return string dot with links.
 	 */
-	public static function wikilinks4dot( string $str ) {
+	public static function wikilinks4dot( $str ) {
 		// Process URL = "[[wikilink]]" in properties.
 		$dewikified = preg_replace_callback(
 			'/(?<attr>URL|href)\s*=\s*"\[\[(?<url>[^|<>\]]+)]]"/',
 			static function ( array $m ) {
-				return $m['attr'] . ' = "' . CoreParserFunctions::localurl( null, $m['url'] ) . '"';
+				return $m['attr'] . ' = "' . (string)CoreParserFunctions::localurl( null, $m['url'] ) . '"';
 			},
 			$str
 		);
 		// Process [[wikilink]] in nodes.
 		$dewikified = preg_replace_callback( '/\[\[([^|<>\]]+)]]\s*(?:\[([^][]+)])?/', static function ( array $m ) {
 			$props = isset( $m[2] ) ? $m[2] : '';
-			return '"' . $m[1] . '"[URL = "' . CoreParserFunctions::localurl( null, $m[1] ) . '"; ' . $props . ']';
+			return '"' . $m[1]
+				 . '"[URL = "' . (string)CoreParserFunctions::localurl( null, $m[1] ) . '"; ' . $props . ']';
 		}, $dewikified );
 		return $dewikified;
 	}
@@ -432,11 +394,11 @@ class EDConnectorExe extends EDConnectorBase {
 	 * @param string $str Text to add wikilinks in UML format.
 	 * @return string dot with links.
 	 */
-	public static function wikilinks4uml( string $str ) {
+	public static function wikilinks4uml( $str ) {
 		// Process [[wikilink]] in nodes.
-		return preg_replace_callback( '/\[\[([^|\]]+)(?:\|([^\]]*))?]]/', static function ( array $m ) {
+		return preg_replace_callback( '/\[\[([^|\]]+)(?:\|([^]]*))?]]/', static function ( array $m ) {
 			$alias = isset( $m[2] ) ? $m[2] : $m[1];
-			return '[[' . CoreParserFunctions::localurl( null, $m[1] ) . ' ' . $alias . ']]';
+			return '[[' . (string)CoreParserFunctions::localurl( null, $m[1] ) . ' ' . $alias . ']]';
 		}, $str );
 	}
 
@@ -446,7 +408,7 @@ class EDConnectorExe extends EDConnectorBase {
 	 * @param string $xml XML to extract SVG from.
 	 * @return string The stripped SVG.
 	 */
-	public static function innerXML( string $xml ): string {
+	public static function innerXML( $xml ) {
 		$dom = new DOMDocument();
 		$dom->loadXML( $xml );
 		return $dom->saveHTML();

@@ -7,6 +7,9 @@
  *
  */
 class EDConnectorLdap extends EDConnectorBase {
+	/** @const string ID_PARAM What the specific parameter identifying the connection is called. */
+	protected const ID_PARAM = 'domain';
+
 	/** @var string LDAP filter. */
 	private $filter;
 	/** @var bool Get all LDAP data. */
@@ -21,7 +24,7 @@ class EDConnectorLdap extends EDConnectorBase {
 	private $user;
 	/** @var string Real LDAP password. */
 	private $password;
-	/** @var resource Connection to LDAP server. */
+	/** @var resource|null Connection to LDAP server. */
 	private $connection;
 
 	/**
@@ -33,12 +36,19 @@ class EDConnectorLdap extends EDConnectorBase {
 	protected function __construct( array &$args, Title $title ) {
 		parent::__construct( $args, $title );
 
+		$this->domain = isset( $args[self::ID_PARAM] ) ? $args[self::ID_PARAM] : null;
+
+		// This connector needs an explicit set of fields.
+		if ( !array_key_exists( 'data', $args ) ) {
+			$this->error( 'externaldata-no-param-specified', 'data' );
+		}
+
 		// Parameters specific for {{#get_ldap_data:}} and mw.ext.externalData.getLdapData.
 		if ( !function_exists( 'ldap_connect' ) ) {
 			$this->error(
 				'externaldata-missing-library',
 				'php-ldap',
-				'{{#get_ldap_data:}}',
+				'#get_ldap_data',
 				'mw.ext.externalData.getLdapData'
 			);
 		}
@@ -46,11 +56,6 @@ class EDConnectorLdap extends EDConnectorBase {
 			$this->filter = $args['filter'];
 		} else {
 			$this->error( 'externaldata-no-param-specified', 'filter' );
-		}
-		if ( isset( $args['domain'] ) ) {
-			$this->domain = $args['domain'];
-		} else {
-			$this->error( 'externaldata-no-param-specified', 'domain' );
 		}
 		if ( isset( $args['server'] ) ) {
 			$this->server = $args['server'];
@@ -85,7 +90,7 @@ class EDConnectorLdap extends EDConnectorBase {
 			if ( !is_array( $row ) ) {
 				continue;
 			}
-			foreach ( $this->mappings as $external_var ) {
+			foreach ( $this->mappings() as $external_var ) {
 				if ( !array_key_exists( $external_var, $result ) ) {
 					$result[$external_var] = [];
 				}
@@ -130,9 +135,10 @@ class EDConnectorLdap extends EDConnectorBase {
 				$this->error( 'externaldata-ldap-unable-to-bind', $this->domain );
 				$this->connection = null;
 				$exception = true;
+			} finally {
+				// Restore warnings.
+				self::stopThrowingWarnings();
 			}
-			// Restore warnings.
-			self::stopThrowingWarnings();
 			if ( !$bound && !$exception /* Do not repeat  twice. */ ) {
 				$this->error( 'externaldata-ldap-unable-to-bind', $this->domain ); // not $this->server!
 				$this->connection = null;
@@ -148,7 +154,7 @@ class EDConnectorLdap extends EDConnectorBase {
 	 * @return array Search results.
 	 */
 	private function searchLDAP() {
-		$sr = ldap_search( $this->connection, $this->baseDn, $this->filter, array_values( $this->mappings ) );
+		$sr = ldap_search( $this->connection, $this->baseDn, $this->filter, array_values( $this->mappings() ) );
 		$results = ldap_get_entries( $this->connection, $sr );
 		return $results;
 	}

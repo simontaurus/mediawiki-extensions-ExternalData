@@ -9,8 +9,6 @@
  */
 
 use Wikimedia\AtEase\AtEase;
-use function MediaWiki\restoreWarnings;
-use function MediaWiki\suppressWarnings;
 
 trait EDParsesParams {
 	/** @var string PREFIX Prefix for the new configuration. */
@@ -63,30 +61,52 @@ trait EDParsesParams {
 	}
 
 	/**
-	 * Check, if the passed parameters fit a 'pattern':
+	 * Check if the passed parameters fit a 'pattern'
+	 * set in $wgExternalDataConnectors or $wgExternalDataParsers:
 	 *
 	 * @param array $params Parameters to be checked.
 	 * @param array $pattern Parameters 'pattern'.
-	 *
 	 * @return bool
 	 */
 	private static function paramsFit( array $params, array $pattern ) {
 		foreach ( $pattern as $key => $value ) {
-			if ( $key === '__exists' ) {
-				if ( class_exists( $value ) ) {
-					// A necessary class is provided by a library.
-					continue;
-				} else {
-					return false;
+			if ( $key === '__exists' ) { // this part of the 'pattern' is a dependency.
+				$dependencies = is_array( $value ) ? $value : [ $value ];
+				foreach ( $dependencies as $dependency ) {
+					if ( class_exists( $dependency ) || function_exists( $dependency ) ) { // and it is met.
+						continue 2; // continue with this 'pattern'.
+					} else {
+						return false; // dependency is not met, and the 'pattern' fails.
+					}
 				}
 			}
-			if ( !array_key_exists( $key, $params ) // | use xpath, etc.
-			  || !(
-					$value === true // argument should be present.
-				 || strtolower( $params[$key] ) === strtolower( $value ) // argument should have a certain value.
-				 || self::isRegex( $value ) && preg_match( $value, $params[$key] ) // argument should match a regex.
-				) // format = (format), etc.
-			) {
+			$parameter_present = array_key_exists( $key, $params );
+			if ( $value === true ) { // parameter is required.
+				if ( $parameter_present ) { // and is present.
+					continue; // this parameter needs no further checks.
+				} else {
+					return false; // parameter is absent, and the 'pattern' fails.
+				}
+			}
+			if ( $value === false ) { // parameter is forbidden.
+				if ( !$parameter_present ) { // and is absent.
+					continue; // this parameter needs no further checks.
+				} else {
+					return false; // parameter is present, and the 'pattern' fails.
+				}
+			}
+			if ( !$parameter_present ) {
+				return false; // at this point, parameter ought to be set.
+			}
+			if ( self::isRegex( $value ) ) { // parameter is a regular expression.
+				if ( preg_match( $value, $params[$key] ) ) { // and it matches.
+					continue; // this parameter needs no further checks.
+				} else {
+					return false; // does not match, and the 'pattern' fails.
+				}
+			}
+			// At this point, only exact (case insensitive) match will do.
+			if ( strtolower( $params[$key] ) !== strtolower( $value ) ) {
 				return false;
 			}
 		}
@@ -101,13 +121,24 @@ trait EDParsesParams {
 	 * @return bool
 	 */
 	private static function isRegex( $str ) {
-		self::suppressWarnings(); // for preg_match() on regular strings.
-		try {
-			$is_regex = preg_match( $str, '' ) !== false;
-		} catch ( Exception $e ) {
+		if ( !preg_match( '/^(?:
+			# Same delimiter character at the start and the end
+			([^\s\w\\\\]).+\\1
+			|
+			# Pairs of brackets can also be used as delimiters
+			\(.+\) | \{.+} | \[.+] | <.+>
+		)[imsxADSUXJu]*$/x', $str ) ) {
 			return false;
 		}
-		self::restoreWarnings();
+		self::suppressWarnings(); // for preg_match() on regular strings.
+		try {
+			// phpcs:ignore Generic.PHP.NoSilencedErrors.Discouraged
+			$is_regex = @preg_match( $str, '' ) !== false;
+		} catch ( Exception $e ) {
+			return false;
+		} finally {
+			self::restoreWarnings();
+		}
 		return $is_regex;
 	}
 
@@ -141,37 +172,37 @@ trait EDParsesParams {
 			/x
 END;
 			// " - fix for color highlighting in vi :)
-			$keyValuePairs = preg_split( $pattern, $arg );
-			$splitArray = [];
+			$key_value_pairs = preg_split( $pattern, $arg );
+			$split_array = [];
 			$counter = 0;
-			foreach ( $keyValuePairs as $keyValuePair ) {
-				if ( $keyValuePair === '' ) {
+			foreach ( $key_value_pairs as $key_value_pair ) {
+				if ( $key_value_pair === '' ) {
 					// Ignore.
-				} elseif ( strpos( $keyValuePair, '=' ) !== false ) {
-					[ $key, $value ] = explode( '=', $keyValuePair, 2 );
-					$splitArray[trim( $key )] = trim( $value );
+				} elseif ( strpos( $key_value_pair, '=' ) !== false ) {
+					[ $key, $value ] = explode( '=', $key_value_pair, 2 );
+					$split_array[trim( $key )] = trim( $value );
 				} elseif ( $numeric ) {
-					$splitArray[$counter++] = trim( $keyValuePair );
+					$split_array[$counter++] = trim( $key_value_pair );
 				} else {
-					$splitArray[trim( $keyValuePair )] = trim( $keyValuePair );
+					$split_array[trim( $key_value_pair )] = trim( $key_value_pair );
 				}
 			}
 		} else {
 			// It's already an array.
-			$splitArray = $arg;
+			$split_array = $arg;
 		}
 		// Set the letter case as required.
-		$caseConvertedArray = [];
-		foreach ( $splitArray as $key => $value ) {
+		$case_converted_array = [];
+		foreach ( $split_array as $key => $value ) {
 			$new_key = trim( $lowercaseKeys ? strtolower( $key ) : $key );
 			if ( is_string( $value ) ) {
 				$new_value = trim( $lowercaseValues ? strtolower( $value ) : $value );
 			} else {
 				$new_value = $value;
 			}
-			$caseConvertedArray[$new_key] = $new_value;
+			$case_converted_array[$new_key] = $new_value;
 		}
-		return $caseConvertedArray;
+		return $case_converted_array;
 	}
 
 	/**
@@ -183,62 +214,72 @@ END;
 	 */
 	protected static function parseParams( $params ) {
 		$args = [];
-		foreach ( $params as $param ) {
-			$param_parts = preg_split( '/\s*=\s*/', $param, 2 );
-			if ( count( $param_parts ) < 2 ) {
-				$args[$param_parts[0]] = null;
+		foreach ( $params as $key => $param ) {
+			if ( is_int( $key ) ) {
+				$param_parts = preg_split( '/\s*=\s*/', $param, 2 );
+				if ( count( $param_parts ) < 2 ) {
+					$args[$param_parts[0]] = null;
+					// Also, keep the numbered parameter.
+					$args[$key] = $param;
+				} else {
+					[ $name, $value ] = $param_parts;
+					$args[$name] = $value;
+				}
 			} else {
-				[ $name, $value ] = $param_parts;
-				$args[$name] = $value;
+				$args[$key] = $param;
 			}
 		}
 		return $args;
 	}
 
 	/**
-	 * Substitute parameters into a string (command, environment variable, etc.).
-	 *
-	 * @param string|array $template The string(s) in which parameters are to be substituted.
-	 * @param array $parameters Validated parameters.
-	 *
-	 * @return string|array The string(s) with substituted parameters.
+	 * Pile a set of columns atop another set of columns in-place.
+	 * @param array &$lower The lower set of columns, atop of which $upper will be piled.
+	 * @param array $upper The upper set of columns, to be piled atop of $lower.
+	 * @return void
 	 */
-	protected function substitute( $template, array $parameters ) {
-		foreach ( $parameters as $name => $value ) {
-			$template = preg_replace( '/\\$' . preg_quote( $name, '/' ) . '\\$/', $value, $template );
+	protected static function pile( array &$lower, array $upper ) {
+		if ( !$upper ) {
+			return;
 		}
-		return $template;
+		// Find maximum height of columns to be built on.
+		$maximum_height = 0;
+		foreach ( $upper as $variable => $_ ) {
+			// Create new columns if necessary.
+			if ( !array_key_exists( $variable, $lower ) ) {
+				$lower[$variable] = [];
+			}
+			$maximum_height = max( count( $lower[$variable] ), $maximum_height );
+		}
+		foreach ( $upper as $variable => $column ) {
+			// Stretch out columns if they are to be built on.
+			for ( $counter = count( $lower[$variable] ); $counter < $maximum_height; $counter++ ) {
+				$lower[$variable][$counter] = null;
+			}
+			// Superimpose column from $upper on column from $lower.
+			$lower[$variable] = array_merge( $lower[$variable], $column );
+		}
 	}
 
 	/**
 	 * Suppress warnings absolutely.
 	 */
 	protected static function suppressWarnings() {
-		if ( method_exists( AtEase::class, 'suppressWarnings' ) ) {
-			// MW >= 1.33
-			AtEase::suppressWarnings();
-		} else {
-			suppressWarnings();
-		}
+		AtEase::suppressWarnings();
 	}
 
 	/**
 	 *  Restore warnings.
 	 */
 	protected static function restoreWarnings() {
-		if ( method_exists( AtEase::class, 'restoreWarnings' ) ) {
-			// MW >= 1.33
-			AtEase::restoreWarnings();
-		} else {
-			restoreWarnings();
-		}
+		AtEase::restoreWarnings();
 	}
 
 	/**
 	 * Instead of producing a warning, throw an exception.
-	 * @throws Exception
 	 */
 	protected static function throwWarnings() {
+		// @phan-suppress-next-line PhanTypeMismatchArgumentInternal, PhanPluginNeverReturnFunction
 		set_error_handler( static function ( $errno, $errstr ) {
 			throw new Exception( $errstr );
 		} );

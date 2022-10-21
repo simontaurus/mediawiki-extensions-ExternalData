@@ -30,8 +30,9 @@ class EDConnectorPreparedMysql extends EDConnectorPrepared {
 			$this->error( 'externaldata-db-could-not-connect', $e->getMessage() );
 			self::stopThrowingWarnings();
 			return false;
+		} finally {
+			self::stopThrowingWarnings();
 		}
-		self::stopThrowingWarnings();
 		if ( $this->mysqli->connect_error ) {
 			// Could not create Database object.
 			$this->error( 'externaldata-db-could-not-connect', $this->mysqli->connect_error );
@@ -52,7 +53,9 @@ class EDConnectorPreparedMysql extends EDConnectorPrepared {
 		}
 
 		// Bind parameters.
-		$this->prepared->bind_param( $this->types, ...$this->parameters );
+		if ( count( $this->parameters ) > 0 ) {
+			$this->prepared->bind_param( $this->types, ...$this->parameters );
+		}
 
 		// Execute query.
 		$this->prepared->execute();

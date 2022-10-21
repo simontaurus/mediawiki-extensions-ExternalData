@@ -1,4 +1,6 @@
 <?php
+use MediaWiki\MediaWikiServices;
+
 /**
  * A trait to be used by throttled connectors (all using EDConnectorCached plus EDConnectorPost).
  *
@@ -88,7 +90,14 @@ trait EDConnectorThrottled {
 	 * @param float $when When to reparse the page.
 	 */
 	private function planPurge( $when ) {
-		$queue_group = JobQueueGroup::singleton();
+		if ( method_exists( MediaWikiServices::class, 'getJobQueueGroup' ) ) {
+			// MW 1.37+
+			// @phan-suppress-next-line PhanUndeclaredMethod Different MW versions.
+			$queue_group = MediaWikiServices::getInstance()->getJobQueueGroup();
+		} else {
+			// @phan-suppress-next-line PhanUndeclaredStaticMethod
+			$queue_group = JobQueueGroup::singleton();
+		}
 		$params = [
 			'title' => $this->title->getText(),
 			'namespace' => $this->title->getNamespace(),

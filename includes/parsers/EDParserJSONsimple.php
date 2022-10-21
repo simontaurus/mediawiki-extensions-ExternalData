@@ -8,28 +8,40 @@
 
 class EDParserJSONsimple extends EDParserJSON {
 	/**
+	 * Constructor.
+	 * @param array $params A named array of parameters passed from parser or Lua function.
+	 */
+	public function __construct( array $params ) {
+		parent::__construct( $params );
+
+		// This is important for the right choice of format, if it is "auto".
+		if ( array_key_exists( 'use jsonpath', $params ) ) {
+			throw new EDParserException( 'dummy message' );
+		}
+	}
+
+	/**
 	 * Parse the text. Called as $parser( $text ) as syntactic sugar.
 	 *
 	 * @param string $text The text to be parsed.
-	 *
+	 * @param string|null $path URL or filesystem path that may be relevant to the parser.
 	 * @return array A two-dimensional column-based array of the parsed values.
-	 *
 	 * @throws EDParserException
 	 */
-	public function __invoke( $text ) {
+	public function __invoke( $text, $path = null ): array {
 		$json = substr( $text, $this->prefixLength );
 		$json = $this->removeTrailingComma( $json );
 		// FormatJson class is provided by MediaWiki.
 		$json_tree = FormatJson::decode( $json, true );
 		if ( $json_tree === null ) {
 			// It's probably invalid JSON.
-			throw new EDParserException( 'externaldata-invalid-json' );
+			throw new EDParserException( 'externaldata-invalid-format', self::NAME );
 		}
 		// Save the whole JSON tree for Lua.
 		$values = parent::__invoke( $text );
-		$values['__json'] = [ $json_tree ];
 		if ( is_array( $json_tree ) ) {
 			self::parseTree( $json_tree, $values );
+			$values['__json'] = [ $json_tree ];
 		}
 		return $values;
 	}
@@ -42,7 +54,7 @@ class EDParserJSONsimple extends EDParserJSON {
 	 * @param array &$retrieved_values An array with retrieved values.
 	 *
 	 */
-	private static function parseTree( array $tree, array &$retrieved_values ) {
+	protected static function parseTree( array $tree, array &$retrieved_values ) {
 		foreach ( $tree as $key => $val ) {
 			// TODO - this logic could probably be a little nicer.
 			if ( is_array( $val ) && self::holdsSimpleList( $val ) ) {

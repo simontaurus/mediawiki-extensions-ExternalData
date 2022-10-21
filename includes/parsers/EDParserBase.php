@@ -6,9 +6,15 @@
  * @author Alexander Mashin
  *
  */
-
 abstract class EDParserBase {
 	use EDParsesParams;			// Needs paramToArray().
+
+	/** @const string NAME The name of this format. */
+	public const NAME = '';
+	/** @const array EXT The usual file extensions of this format. */
+	protected const EXT = [];
+	/** @const int GENERICITY The greater, the more this format is likely to succeed on a random input. */
+	public const GENERICITY = 0;
 
 	/** @var bool $addNewlines Add newlines to facilitate cutting out fragments. */
 	protected $addNewlines;
@@ -33,8 +39,6 @@ abstract class EDParserBase {
 			$this->external = array_values(
 				self::paramToArray( $params['data'], false, !$this->keepExternalVarsCase )
 			);
-		} else {
-			throw new EDParserException( 'externaldata-no-param-specified', 'data' );
 		}
 
 		// Whether to add newlines to help cutting out fragments.
@@ -47,11 +51,11 @@ abstract class EDParserBase {
 	 * Reload the method in descendant classes, calling parent::__invoke() in the beginning.
 	 *
 	 * @param string $text The text to be parsed.
-	 *
+	 * @param string|null $path URL or filesystem path that may be relevant to the parser.
 	 * @return array A two-dimensional column-based array of the parsed values.
-	 *
+	 * @throws EDParserException
 	 */
-	public function __invoke( $text ) {
+	public function __invoke( $text, $path = null ): array {
 		return [];
 	}
 
@@ -66,7 +70,7 @@ abstract class EDParserBase {
 	 */
 	public static function getParser( array $params ) {
 		if ( !isset( $params['format'] ) || !$params['format'] ) {
-			throw new EDParserException( 'externaldata-no-param-specified', 'format' );
+			$params['format'] = 'auto';
 		}
 		$class = self::getMatch( $params, self::setting( 'Parsers' ) );
 		if ( $class ) {
@@ -86,5 +90,13 @@ abstract class EDParserBase {
 	 */
 	public function addNewlines( $text, $new_lines ) {
 		return $text;
+	}
+
+	/**
+	 * Return the file extensions associated with this format.
+	 * @return array
+	 */
+	public static function extensions(): array {
+		return static::EXT;
 	}
 }

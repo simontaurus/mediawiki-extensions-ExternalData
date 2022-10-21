@@ -9,23 +9,39 @@
 class ExternalDataHooks {
 
 	/**
-	 * @param Parser &$parser
+	 * @param Parser $parser
 	 * @return bool
 	 */
-	public static function registerParser( Parser &$parser ) {
-		$parser->setFunctionHook( 'get_web_data', [ 'EDParserFunctions', 'getWebData' ] );
-		$parser->setFunctionHook( 'get_file_data', [ 'EDParserFunctions', 'getFileData' ] );
-		$parser->setFunctionHook( 'get_soap_data', [ 'EDParserFunctions', 'getSOAPData' ] );
-		$parser->setFunctionHook( 'get_ldap_data', [ 'EDParserFunctions', 'getLDAPData' ] );
-		$parser->setFunctionHook( 'get_db_data', [ 'EDParserFunctions', 'getDBData' ] );
-		$parser->setFunctionHook( 'get_program_data', [ 'EDParserFunctions', 'getProgramData' ] );
-		$parser->setFunctionHook( 'get_external_data', [ 'EDParserFunctions', 'getExternalData' ] );
+	public static function registerParser( Parser $parser ) {
+		// Add data retrieval parser functions as defined by $wgExternalDataConnectors.
+		global $wgExternalDataAllowGetters;
+		if ( $wgExternalDataAllowGetters ) {
+			foreach ( EDConnectorBase::getConnectors() as $parser_function => $lua_function ) {
+				$parser->setFunctionHook(
+					$parser_function,
+					static function ( Parser $parser, ...$params ) use ( $parser_function ) {
+						$title = $parser->getTitle();
+						return EDParserFunctions::fetch( $title, $parser_function, $params );
+					}
+				);
+			}
+			$parser->setFunctionHook( 'clear_external_data', [ 'EDParserFunctions', 'doClearExternalData' ] );
+		}
 
+		// Data display functions.
 		$parser->setFunctionHook( 'external_value', [ 'EDParserFunctions', 'doExternalValue' ] );
-		$parser->setFunctionHook( 'for_external_table', [ 'EDParserFunctions', 'doForExternalTable' ] );
+		$parser->setFunctionHook(
+			'for_external_table',
+			[ 'EDParserFunctions', 'doForExternalTable' ],
+			Parser::SFH_OBJECT_ARGS
+		);
 		$parser->setFunctionHook( 'display_external_table', [ 'EDParserFunctions', 'doDisplayExternalTable' ] );
-		$parser->setFunctionHook( 'store_external_table', [ 'EDParserFunctions', 'doStoreExternalTable' ] );
-		$parser->setFunctionHook( 'clear_external_data', [ 'EDParserFunctions', 'doClearExternalData' ] );
+		if ( class_exists( 'CargoDisplayFormat' ) ) {
+			$parser->setFunctionHook( 'format_external_table', [ 'EDParserFunctions', 'doFormatExternalTable' ] );
+		}
+		if ( class_exists( '\SMW\ParserFunctionFactory' ) ) {
+			$parser->setFunctionHook( 'store_external_table', [ 'EDParserFunctions', 'doStoreExternalTable' ] );
+		}
 
 		EDConnectorExe::registerTags( $parser );
 
@@ -42,7 +58,7 @@ class ExternalDataHooks {
 		// Autoload class here and not in extension.json, so that it is not loaded if Scribunto is not enabled.
 		global $wgAutoloadClasses;
 		$wgAutoloadClasses[$class] = __DIR__ . '/' . $class . '.php';
-		$extraLibraries['mw.ext.externaldata'] = $class;
+		$extraLibraries['mw.ext.externalData'] = $class;
 		return true; // always return true, in order not to stop MW's hook processing!
 	}
 
