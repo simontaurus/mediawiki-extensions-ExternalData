@@ -82,6 +82,9 @@ abstract class EDConnectorDb extends EDConnectorBase {
 		} else {
 			$this->error( 'externaldata-db-incomplete-information', $this->dbId, 'name' );
 		}
+                if ( isset( $params['port'] ) ) {
+                        $this->credentials['port'] = $params['port'];
+                }
 	}
 
 	/**
