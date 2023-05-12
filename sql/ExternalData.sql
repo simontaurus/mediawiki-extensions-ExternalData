@@ -1,9 +1,7 @@
 CREATE TABLE /*_*/ed_url_cache (
-  `id` int(10) unsigned NOT NULL AUTO_INCREMENT,
-  `url` varchar(255) NOT NULL,
-  `post_vars` text,
-  `req_time` int(11) NOT NULL,
-  `result` longtext,
-  UNIQUE KEY `id` (`id`),
-  KEY `url` (`url`)
+  id SERIAL PRIMARY KEY,
+  url varchar(255) NOT NULL UNIQUE,
+  post_vars text,
+  req_time int NOT NULL,
+  result text
 ) /*$wgDBTableOptions*/;
